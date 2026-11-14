@@ -1,0 +1,15 @@
+{
+  "name": "three-musketeers",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
