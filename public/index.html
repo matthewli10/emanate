@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Three Musketeers</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="room">
+        <h1>Three Musketeers</h1>
+        <ul class="roster" id="roster"></ul>
+      </header>
+      <ol class="transcript" id="transcript" aria-live="polite"></ol>
+      <form class="composer" id="composer">
+        <label class="sr" for="line">Message</label>
+        <input id="line" name="line" type="text" autocomplete="off" placeholder="Message the group" />
+        <button type="submit">Send</button>
+      </form>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

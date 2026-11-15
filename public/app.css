@@ -1,0 +1,141 @@
+:root {
+  color-scheme: light;
+  font-family: "Iowan Old Style", Palatino, Georgia, serif;
+  background: #f4f0e6;
+  color: #1d1a16;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+button, input {
+  font: inherit;
+}
+
+.app {
+  max-width: 760px;
+  min-height: 100vh;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 20px 16px;
+}
+
+.room h1 {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 500;
+}
+
+.roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  color: #5c564c;
+}
+
+.transcript {
+  flex: 1;
+  list-style: none;
+  margin: 24px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.message {
+  max-width: 36rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.message.user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.name {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  color: #6b645b;
+}
+
+.bubble {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fffdf8;
+  border: 1px solid #e4dccb;
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.message.user .bubble {
+  background: #243026;
+  color: #f7f3ea;
+  border-color: #243026;
+}
+
+.message[data-author="curry"] .bubble { border-color: #e2c089; }
+.message[data-author="remy"] .bubble { border-color: #d7b89a; }
+.message[data-author="mcqueen"] .bubble { border-color: #e3b3a8; }
+
+.bubble.streaming:empty::before,
+.bubble.streaming::after {
+  content: "";
+  display: inline-block;
+  width: 0.45rem;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  opacity: 0.45;
+}
+
+.bubble.streaming:empty::before { margin-left: 0; }
+.bubble.streaming:not(:empty)::after { content: ""; }
+.bubble.streaming:empty::after { content: none; }
+
+.composer {
+  display: flex;
+  gap: 8px;
+  position: sticky;
+  bottom: 0;
+  padding-top: 8px;
+  background: #f4f0e6;
+}
+
+.composer input {
+  flex: 1;
+  border: 1px solid #d9d0c0;
+  background: #fffdf8;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.composer button {
+  border: 0;
+  border-radius: 8px;
+  background: #243026;
+  color: #f7f3ea;
+  padding: 0 16px;
+  cursor: pointer;
+}
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
