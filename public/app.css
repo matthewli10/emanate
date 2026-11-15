@@ -25,10 +25,28 @@ button, input {
   padding: 24px 20px 16px;
 }
 
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .room h1 {
   margin: 0;
   font-size: 2rem;
   font-weight: 500;
+}
+
+.title-row button {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.85rem;
+  border: 1px solid #d9d0c0;
+  background: #fffdf8;
+  color: #1d1a16;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
 }
 
 .roster {

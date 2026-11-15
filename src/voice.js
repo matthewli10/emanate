@@ -26,6 +26,28 @@ export function cleanSpeech(text) {
   return next
 }
 
+const QUIET = [
+  "nothing",
+  "nothing.",
+  "stay quiet",
+  "stay quiet.",
+  "i'll stay quiet",
+  "i'll stay quiet.",
+  "i’ll stay quiet",
+  "i’ll stay quiet.",
+]
+
+export function isQuietReply(text) {
+  const line = text.trim().toLowerCase()
+  return line === "" || QUIET.includes(line)
+}
+
+export function isPendingQuiet(text) {
+  const line = text.trim().toLowerCase()
+  if (!line || line.length > 40) return false
+  return QUIET.some((phrase) => phrase.startsWith(line) && phrase !== line)
+}
+
 export function isPendingName(text) {
   const line = text.trim()
   if (!line || line.length > 80) return false

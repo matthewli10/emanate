@@ -22,7 +22,13 @@ export function parseDecision(text) {
   if (!json || typeof json !== "object") return null
   const subject = ["sports", "food", "cars", "none"].includes(json.subject) ? json.subject : "none"
   const effort = ["brief", "normal", "thorough"].includes(json.effort) ? json.effort : "normal"
-  return { speak: Boolean(json.speak), subject, effort }
+  return { speak: Boolean(json.speak), subject, effort, search: json.search === true }
+}
+
+export function parseFresh(text) {
+  const json = parseJsonObject(text)
+  if (typeof json?.new === "boolean") return json.new
+  return null
 }
 
 export function parseMark(text) {

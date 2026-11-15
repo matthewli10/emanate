@@ -50,9 +50,23 @@ export function createFakeModel({ delayMs = 20 } = {}) {
           ? '{"mark":"keep"}'
           : '{"mark":"once"}'
       }
+      if (blob.includes("Who should answer")) {
+        const latest = (blob.split("Latest line:\n")[1] ?? "").split("\n")[0]
+        const subjects = FRIENDS.filter((friend) => {
+          const decision = decisionFor(friend, latest, false, false)
+          return decision.speak && decision.subject === friend.subject
+        }).map((friend) => friend.subject)
+        return JSON.stringify({
+          subjects,
+          search: subjects,
+          dismiss: false,
+          followUp: false,
+          greet: false,
+        })
+      }
       const friend = agentFrom(messages)
       const question = latestUserText(messages)
-      const reply = blob.includes("This is a reply round.")
+      const reply = blob.includes("This is a reply.")
       const addressed = blob.includes("Addressed: yes")
       return JSON.stringify(decisionFor(friend, question, reply, addressed))
     },

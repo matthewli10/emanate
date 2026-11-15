@@ -87,6 +87,17 @@ export function createStore(path) {
     finish(id) {
       db.prepare("UPDATE messages SET status = 'done' WHERE id = ?").run(id)
     },
+    removeMessage(id) {
+      db.prepare("DELETE FROM messages WHERE id = ?").run(id)
+    },
+    clearChat() {
+      db.exec(`
+        DELETE FROM messages;
+        DELETE FROM directives;
+        DELETE FROM room;
+        UPDATE seq SET n = 0;
+      `)
+    },
     addDirective({ agentId = null, text }) {
       const row = { id: randomUUID(), seq: nextSeq(), agentId, text }
       db.prepare("INSERT INTO directives (id, seq, agent_id, text) VALUES (?, ?, ?, ?)").run(

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { findAddress, isStop } from "../src/names.js"
+import { findAddress, findAddresses, isStop } from "../src/names.js"
 import { chooseSpeakers } from "../src/speakers.js"
 import { fallbackMark } from "../src/standing.js"
 import { ballotMessages } from "../src/prompts.js"
@@ -15,6 +15,11 @@ test("a name counts only as an address", () => {
   assert.equal(findAddress("Lightning McQueen keep it short")?.id, "mcqueen")
   assert.equal(findAddress("what curry should I order?"), null)
   assert.equal(findAddress("Stop"), null)
+  assert.deepEqual(
+    findAddresses("Remy, what's the move near Chase Center, and McQueen, what's he driving?"),
+    ["remy", "mcqueen"],
+  )
+  assert.equal(findAddress("Remy, what's the move, and McQueen, what's he driving?")?.id, "remy")
 })
 
 test("stop is the whole line", () => {

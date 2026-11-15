@@ -2,7 +2,9 @@ const transcript = document.querySelector("#transcript")
 const roster = document.querySelector("#roster")
 const form = document.querySelector("#composer")
 const input = document.querySelector("#line")
+const refresh = document.querySelector("#refresh")
 const messages = new Map()
+let socket
 
 function renderRoster(friends) {
   roster.replaceChildren()
@@ -39,7 +41,7 @@ function upsert(message) {
 }
 
 function connect() {
-  const socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`)
+  socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`)
   socket.addEventListener("message", (event) => {
     const data = JSON.parse(event.data)
     if (data.type === "snapshot") {
@@ -51,6 +53,11 @@ function connect() {
     }
     if (data.type === "message") {
       upsert(data)
+      return
+    }
+    if (data.type === "remove") {
+      messages.delete(data.id)
+      render()
       return
     }
     const current = messages.get(data.id)
@@ -71,5 +78,10 @@ function connect() {
     input.value = ""
   }
 }
+
+refresh.addEventListener("click", () => {
+  if (socket?.readyState !== WebSocket.OPEN) return
+  socket.send(JSON.stringify({ type: "clear" }))
+})
 
 connect()

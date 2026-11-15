@@ -24,13 +24,15 @@ function testModel(script) {
     maxTokens,
     async complete({ messages }) {
       const blob = messages.map((message) => message.content).join("\n")
+      if (blob.includes("Who should answer")) return script.route?.(blob) || defaultTestRoute(blob)
+      if (blob.includes("Already said:")) return script.fresh?.(blob) ?? '{"new":true}'
       if (blob.includes('{"mark":"keep"}')) return script.mark ?? '{"mark":"once"}'
       const name = blob.includes("You are Stephen Curry")
         ? "curry"
         : blob.includes("You are Remy the Rat")
           ? "remy"
           : "mcqueen"
-      const reply = blob.includes("This is a reply round.")
+      const reply = blob.includes("This is a reply.")
       return JSON.stringify(script.decide(name, reply, blob.includes("Addressed: yes")))
     },
     async *stream({ messages, maxTokens, signal }) {
@@ -57,6 +59,29 @@ function testModel(script) {
       }
     },
   }
+}
+
+function defaultTestRoute(blob) {
+  const latest = (blob.split("Latest line:\n")[1] ?? "").split("\n")[0].trim()
+  const prior = blob.match(/Subjects already in this conversation: (.+)/)?.[1] ?? "none"
+  const lanes = prior === "none" ? [] : prior.split(",").map((subject) => subject.trim()).filter(Boolean)
+  const empty = { subjects: [], search: [], dismiss: false, followUp: false, greet: false }
+  if (/^(nvm|never ?mind|nevermind|i know|nvm i know)[.!?]*$/i.test(latest)) {
+    return JSON.stringify({ ...empty, dismiss: true })
+  }
+  if (/^(hello|hey|hi|you there)\??[.!?]*$/i.test(latest)) {
+    if (!lanes.length) return JSON.stringify({ ...empty, greet: true })
+    return JSON.stringify({ ...empty, subjects: lanes, search: lanes, followUp: true })
+  }
+  if (/can't|cant|won't|wont|don't|dont/.test(latest) && /^(why|what)\b/i.test(latest)) {
+    return JSON.stringify({ ...empty, subjects: lanes, search: lanes, followUp: true })
+  }
+  const subjects = []
+  if (/\b(warriors?|games?|sports?|players?|teams?)\b/i.test(latest)) subjects.push("sports")
+  if (/\b(dinner|restaurants?|eat|eating|food|foods|menus?|order|dishes?)\b/i.test(latest)) subjects.push("food")
+  if (/\b(cars?|drive|driving|parking|traffic)\b/i.test(latest)) subjects.push("cars")
+  const search = /\b(tonight|today|costs?|who are|where|best|open)\b/i.test(latest) ? subjects : []
+  return JSON.stringify({ ...empty, subjects, search })
 }
 
 function waitFor(check) {
@@ -404,7 +429,9 @@ test("a reply searches for the friend who was asked, and the subject survives a 
   const script = {
     maxTokens: [],
     speech: "Remy, what is open tonight?",
-    decide: () => ({ speak: false, subject: "none", effort: "brief" }),
+    decide: (_id, reply) => reply
+      ? { speak: true, subject: "food", effort: "brief", search: true }
+      : { speak: false, subject: "none", effort: "brief" },
   }
   const model = testModel(script)
   const originalStream = model.stream
@@ -439,6 +466,209 @@ test("a reply searches for the friend who was asked, and the subject survives a 
   await again.handleUserMessage("why cant you give me the answer")
   await waitFor(() => store.messages().filter((message) => message.author === "curry").length === 2)
   assert.deepEqual(searches, ["sports", "food", "sports"])
+  assert.match(remy, /Add only the part of your own subject that is still missing/)
+  assert.match(remy, /Remy, what is open tonight\?/)
+})
+
+test("a reply that would only repeat is not saved", async () => {
+  const store = createStore(":memory:")
+  const searches = []
+  const model = testModel({
+    maxTokens: [],
+    speech: "Remy, is the drive worth it?",
+    decide: (_id, reply) => ({ speak: !reply, subject: reply ? "food" : "sports", effort: "brief" }),
+  })
+  const actor = createActor({
+    store,
+    model,
+    emit: () => {},
+    search: async ({ subject }) => {
+      searches.push(subject)
+      return []
+    },
+  })
+  await actor.handleUserMessage("who are the good players on the warriors")
+  await waitFor(() => store.messages().some((message) => message.author === "curry" && message.status === "done"))
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.deepEqual(store.messages().filter((message) => message.author !== "user").map((message) => message.author), ["curry"])
+  assert.deepEqual(searches, ["sports"])
+})
+
+test("an empty reply and a quiet reply are dropped, and a new point is kept", async () => {
+  const dropped = createStore(":memory:")
+  const events = []
+  const emptyScript = {
+    maxTokens: [],
+    speech: "Remy, what should we eat?",
+    decide: () => ({ speak: true, subject: "food", effort: "brief" }),
+  }
+  const empty = testModel(emptyScript)
+  const original = empty.stream
+  empty.stream = async function* (request) {
+    const blob = request.messages.map((message) => message.content).join("\n")
+    emptyScript.speech = blob.includes("You are Remy the Rat") ? "nothing" : "Remy, what should we eat?"
+    yield* original.call(empty, request)
+  }
+  const actor = createActor({ store: dropped, model: empty, emit: (event) => events.push(event), search: async () => [] })
+  await actor.handleUserMessage("who are the warriors")
+  await waitFor(() => dropped.messages().some((message) => message.author === "curry" && message.status === "done"))
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  assert.deepEqual(dropped.messages().map((message) => message.author), ["user", "curry"])
+  assert.equal(events.some((event) => event.type === "message" && event.author === "remy"), false)
+
+  const kept = createStore(":memory:")
+  const prompts = []
+  const usefulScript = {
+    maxTokens: [],
+    speech: "Remy, what should we eat?",
+    decide: () => ({ speak: true, subject: "food", effort: "brief" }),
+  }
+  const useful = testModel(usefulScript)
+  const usefulStream = useful.stream
+  useful.stream = async function* (request) {
+    const blob = request.messages.map((message) => message.content).join("\n")
+    prompts.push(blob)
+    usefulScript.speech = blob.includes("You are Remy the Rat")
+      ? "The lamb curry is the one to order."
+      : "Remy, what should we eat?"
+    yield* usefulStream.call(useful, request)
+  }
+  const second = createActor({ store: kept, model: useful, emit: () => {}, search: async () => [] })
+  await second.handleUserMessage("who are the warriors")
+  await waitFor(() => kept.messages().some((message) => message.author === "remy" && message.status === "done"))
+  assert.equal(kept.messages().find((message) => message.author === "remy").body, "The lamb curry is the one to order.")
+  const remy = prompts.find((prompt) => prompt.includes("You are Remy the Rat"))
+  assert.match(remy, /Add only the part of your own subject that is still missing/)
+  assert.match(remy, /write nothing/)
+  assert.match(remy, /Remy, what should we eat\?/)
+})
+
+test("a reply includes every friend who asked, and a second ask is still capped", async () => {
+  const store = createStore(":memory:")
+  const prompts = []
+  const script = {
+    maxTokens: [],
+    speech: "Remy, is dinner worth it?",
+    decide: (id, reply) => ({ speak: reply ? id === "remy" : true, subject: "food", effort: "brief" }),
+  }
+  const model = testModel(script)
+  const original = model.stream
+  model.stream = async function* (request) {
+    const blob = request.messages.map((message) => message.content).join("\n")
+    prompts.push(blob)
+    if (blob.includes("You are Remy the Rat")) script.speech = "Order the lamb curry."
+    else if (blob.includes("You are Lightning McQueen")) script.speech = "Remy, is dinner worth it?"
+    else script.speech = "Remy, is dinner worth it?"
+    yield* original.call(model, request)
+  }
+  const actor = createActor({ store, model, emit: () => {}, search: async () => [] })
+  await actor.handleUserMessage("Is it worth driving an hour to a restaurant on a night there's a Warriors game?")
+  await waitFor(() => {
+    const agents = store.messages().filter((message) => message.author !== "user")
+    return agents.length >= 4 && agents.every((message) => message.status === "done")
+  })
+  const authors = store.messages().filter((message) => message.author !== "user").map((message) => message.author)
+  assert.deepEqual(authors, ["curry", "remy", "mcqueen", "remy"])
+  const reply = prompts.find((prompt) => prompt.includes("You are Remy the Rat") && prompt.includes("still missing"))
+  assert.match(reply, /Stephen Curry: Remy, is dinner worth it\?/)
+  assert.match(reply, /Lightning McQueen: Remy, is dinner worth it\?/)
+})
+
+test("refresh clears the chat, standing lines, and the last subject", async () => {
+  const store = createStore(":memory:")
+  const events = []
+  const model = testModel({
+    maxTokens: [],
+    mark: '{"mark":"keep"}',
+    speech: "Curry and Green.",
+    decide: () => ({ speak: true, subject: "none", effort: "brief" }),
+  })
+  const actor = createActor({ store, model, emit: (event) => events.push(event), search: async () => [] })
+  await actor.handleUserMessage("From now on, pick a side.")
+  await waitFor(() => store.messages().some((message) => message.author === "curry" && message.status === "done"))
+  await actor.handleUserMessage("who are the good players on the warriors")
+  await waitFor(() => store.messages().filter((message) => message.author === "curry").length === 2)
+  await actor.reset()
+  assert.equal(store.messages().length, 0)
+  assert.deepEqual(store.directivesFor("curry"), [])
+  assert.equal(store.getRoom("subjects"), null)
+  assert.match(store.notesFor("curry"), /Stephen Curry/)
+  assert.equal(events.at(-1).type, "snapshot")
+  assert.deepEqual(events.at(-1).messages, [])
+  await actor.handleUserMessage("hello?")
+  await waitFor(() => store.messages().some((message) => message.author === "curry" && message.status === "done"))
+  assert.deepEqual(store.messages().filter((message) => message.author !== "user").map((message) => message.author), ["curry"])
+})
+
+test("refresh stops an answer that is still being written", async () => {
+  const hold = deferred()
+  const store = createStore(":memory:")
+  const model = testModel({
+    maxTokens: [],
+    holdStart: hold,
+    speech: "The game is worth watching if the best players are in.",
+    decide: () => ({ speak: true, subject: "sports", effort: "normal" }),
+  })
+  const actor = createActor({ store, model, emit: () => {} })
+  await actor.handleUserMessage("Is the game worth watching?")
+  await waitFor(() => model.signals.length === 1)
+  await actor.reset()
+  hold.resolve()
+  await new Promise((resolve) => setTimeout(resolve, 80))
+  assert.equal(store.messages().length, 0)
+  assert.equal(store.notesFor("remy").includes("Remy"), true)
+})
+
+test("a reworded reply is dropped, and a different fact is kept", async () => {
+  const repeatStore = createStore(":memory:")
+  const repeatScript = {
+    maxTokens: [],
+    speech: "Remy, where's the spot for dinner?",
+    decide: () => ({ speak: true, subject: "food", effort: "brief" }),
+    fresh: (blob) => blob.includes("Draft reply:") ? '{"new":false}' : '{"new":true}',
+  }
+  const repeatModel = testModel(repeatScript)
+  const repeatStream = repeatModel.stream
+  repeatModel.stream = async function* (request) {
+    const blob = request.messages.map((message) => message.content).join("\n")
+    if (blob.includes("You are Remy the Rat") && blob.includes("still missing")) {
+      repeatScript.speech = "The brisket at Fikscue or the soup dumplings at Dumpling Time."
+    } else if (blob.includes("You are Remy the Rat")) {
+      repeatScript.speech = "Fikscue or Dumpling Time before tipoff."
+    } else {
+      repeatScript.speech = "Remy, where's the spot for dinner?"
+    }
+    yield* repeatStream.call(repeatModel, request)
+  }
+  const repeatActor = createActor({ store: repeatStore, model: repeatModel, emit: () => {}, search: async () => [] })
+  await repeatActor.handleUserMessage("What's the Warriors game like, and where should we eat dinner?")
+  await waitFor(() => repeatStore.messages().filter((message) => message.author !== "user" && message.status === "done").length >= 2)
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  const repeatAuthors = repeatStore.messages().filter((message) => message.author !== "user").map((message) => message.author)
+  assert.deepEqual(repeatAuthors, ["curry", "remy"])
+  assert.equal(repeatStore.messages().find((message) => message.author === "remy").body, "Fikscue or Dumpling Time before tipoff.")
+
+  const keptStore = createStore(":memory:")
+  const keptScript = {
+    maxTokens: [],
+    speech: "Remy, are they open tonight?",
+    decide: () => ({ speak: true, subject: "food", effort: "brief" }),
+    fresh: (blob) => blob.includes("open tonight") ? '{"new":true}' : '{"new":false}',
+  }
+  const keptModel = testModel(keptScript)
+  const keptStream = keptModel.stream
+  keptModel.stream = async function* (request) {
+    const blob = request.messages.map((message) => message.content).join("\n")
+    if (blob.includes("You are Remy the Rat") && blob.includes("still missing")) keptScript.speech = "Both are open until 9."
+    else if (blob.includes("You are Remy the Rat")) keptScript.speech = "Fikscue or Dumpling Time before tipoff."
+    else keptScript.speech = "Remy, are they open tonight?"
+    yield* keptStream.call(keptModel, request)
+  }
+  const keptActor = createActor({ store: keptStore, model: keptModel, emit: () => {}, search: async () => [] })
+  await keptActor.handleUserMessage("What's the Warriors game like, and where should we eat dinner?")
+  await waitFor(() => keptStore.messages().some((message) => message.body === "Both are open until 9."))
+  const keptAuthors = keptStore.messages().filter((message) => message.author !== "user").map((message) => message.author)
+  assert.deepEqual(keptAuthors, ["curry", "remy", "remy"])
 })
 
 test("stop while nobody is writing adds no answer, and a kept line is private", async () => {
@@ -465,4 +695,261 @@ test("stop while nobody is writing adds no answer, and a kept line is private", 
   assert.match(prompts[0], /From now on, pick a side/)
   assert.equal(store.publicMessages().some((message) => message.body.includes("private notes")), false)
   assert.equal(JSON.stringify(store.publicMessages()).includes("Never invent a live score"), false)
+})
+
+test("a cuisine correction after the answer is a new food turn, not a rule and not silence", async () => {
+  const store = createStore(":memory:")
+  const script = {
+    maxTokens: [],
+    speech: "Thai in the Tenderloin.",
+    decide: () => ({ speak: false, subject: "none", effort: "brief" }),
+    route(blob) {
+      if (!blob.includes("Latest line:\nactually no chinese")) return null
+      return '{"subjects":["food"],"search":[],"dismiss":false,"followUp":true,"greet":false}'
+    },
+  }
+  const model = testModel(script)
+  const original = model.stream
+  model.stream = async function* (request) {
+    const blob = request.messages.map((message) => message.content).join("\n")
+    script.speech = blob.includes("actually no chinese") ? "Chinatown for dumplings." : "Thai in the Tenderloin."
+    yield* original.call(model, request)
+  }
+  const actor = createActor({ store, model, emit: () => {}, search: async () => [] })
+  await actor.handleUserMessage("i want thai food")
+  await waitFor(() => store.messages().some((message) => message.body === "Thai in the Tenderloin."))
+  await actor.handleUserMessage("actually no chinese")
+  await waitFor(() => store.messages().some((message) => message.body === "Chinatown for dumplings."))
+  assert.deepEqual(
+    store.messages().filter((message) => message.author !== "user").map((message) => message.author),
+    ["remy", "remy"],
+  )
+  assert.deepEqual(store.directivesFor("remy"), [])
+  assert.equal(store.getRoom("subjects"), '["food"]')
+})
+
+test("a steer aborts the old draft before the slow mark returns, and an empty rewrite keeps the text", async () => {
+  const store = createStore(":memory:")
+  const hold = deferred()
+  const script = {
+    maxTokens: [],
+    speech: "Thai in the Tenderloin tonight.",
+    decide: () => ({ speak: true, subject: "food", effort: "brief" }),
+  }
+  const model = testModel(script)
+  const originalComplete = model.complete
+  const originalStream = model.stream
+  model.complete = async (request) => {
+    const blob = request.messages.map((message) => message.content).join("\n")
+    if (blob.includes('{"mark":"keep"}') && blob.includes("actually chinese")) await hold.promise
+    return originalComplete(request)
+  }
+  model.stream = async function* (request) {
+    const blob = request.messages.map((message) => message.content).join("\n")
+    if (blob.includes("leave the earlier request behind")) return
+    yield* originalStream.call(model, request)
+  }
+  const actor = createActor({ store, model, emit: () => {}, search: async () => [] })
+  await actor.handleUserMessage("i want thai food")
+  await waitFor(() => store.messages().some((message) => message.author === "remy" && message.body.includes("Thai")))
+  const first = model.signals[0]
+  const pending = actor.handleUserMessage("actually chinese")
+  await waitFor(() => first.aborted)
+  hold.resolve()
+  await pending
+  await waitFor(() => store.messages().some((message) => message.author === "remy" && message.status === "done"))
+  const remy = store.messages().find((message) => message.author === "remy")
+  assert.match(remy.body, /Thai/)
+  assert.equal(store.messages().filter((message) => message.author === "remy").length, 1)
+})
+
+test("changing lanes while someone is writing stops them and starts the new owner", async () => {
+  const store = createStore(":memory:")
+  const script = {
+    maxTokens: [],
+    speech: "The noodles are worth the trip tonight.",
+    decide: () => ({ speak: true, subject: "cars", effort: "brief" }),
+  }
+  const model = testModel(script)
+  const original = model.stream
+  model.stream = async function* (request) {
+    const blob = request.messages.map((message) => message.content).join("\n")
+    script.speech = blob.includes("You are Lightning McQueen")
+      ? "Take the compact."
+      : "The noodles are worth the trip tonight."
+    yield* original.call(model, request)
+  }
+  const actor = createActor({ store, model, emit: () => {}, search: async () => [] })
+  await actor.handleUserMessage("i want thai food")
+  await waitFor(() => store.messages().some((message) => message.body.includes("noodles")))
+  await actor.handleUserMessage("what car should I take")
+  await waitFor(() => store.messages().some((message) => message.body === "Take the compact."))
+  const remy = store.messages().find((message) => message.author === "remy")
+  assert.equal(remy.status, "done")
+  assert.match(remy.body, /noodles/)
+  assert.equal(store.messages().filter((message) => message.author === "remy").length, 1)
+  assert.equal(store.getRoom("subjects"), '["cars"]')
+})
+
+test("a line outside any fixed vocabulary still reaches the friend the model names", async () => {
+  const store = createStore(":memory:")
+  const script = {
+    maxTokens: [],
+    speech: "The corner place is the one.",
+    decide: () => ({ speak: false, subject: "none", effort: "brief" }),
+    route(blob) {
+      if (!blob.includes("Latest line:\nzxqp the flarn")) return null
+      return '{"subjects":["food"],"search":[],"dismiss":false,"followUp":true,"greet":false}'
+    },
+  }
+  const actor = createActor({ store, model: testModel(script), emit: () => {}, search: async () => [] })
+  await actor.handleUserMessage("where should we eat dinner tonight")
+  await waitFor(() => store.messages().some((message) => message.author === "remy" && message.status === "done"))
+  await actor.handleUserMessage("zxqp the flarn")
+  await waitFor(() => store.messages().filter((message) => message.author === "remy" && message.status === "done").length === 2)
+  assert.deepEqual(
+    store.messages().filter((message) => message.author !== "user").map((message) => message.author),
+    ["remy", "remy"],
+  )
+  assert.equal(store.getRoom("subjects"), '["food"]')
+})
+
+test("the model keeps a new reply and drops one it judges as already said", async () => {
+  const kept = createStore(":memory:")
+  const keptScript = {
+    maxTokens: [],
+    speech: "Remy, any other spots near Chase Center?",
+    decide: () => ({ speak: true, subject: "food", effort: "brief" }),
+    fresh: () => '{"new":true}',
+  }
+  const keptModel = testModel(keptScript)
+  const keptStream = keptModel.stream
+  keptModel.stream = async function* (request) {
+    const blob = request.messages.map((message) => message.content).join("\n")
+    if (blob.includes("You are Remy the Rat") && blob.includes("still missing")) keptScript.speech = "Try Tartine in the Mission."
+    else if (blob.includes("You are Remy the Rat")) keptScript.speech = "Fikscue or Dumpling Time before tipoff."
+    else keptScript.speech = "Remy, any other spots near Chase Center?"
+    yield* keptStream.call(keptModel, request)
+  }
+  const keptActor = createActor({ store: kept, model: keptModel, emit: () => {}, search: async () => [] })
+  await keptActor.handleUserMessage("What's the Warriors game like tonight, and where should we eat dinner?")
+  await waitFor(() => kept.messages().some((message) => message.body === "Try Tartine in the Mission."))
+  assert.deepEqual(
+    kept.messages().filter((message) => message.author !== "user").map((message) => message.author),
+    ["curry", "remy", "remy"],
+  )
+
+  const dropped = createStore(":memory:")
+  const droppedScript = {
+    maxTokens: [],
+    speech: "Remy, any other spots near Chase Center?",
+    decide: () => ({ speak: true, subject: "food", effort: "brief" }),
+    fresh: (blob) => blob.includes("Draft reply:") ? '{"new":false}' : '{"new":true}',
+  }
+  const droppedModel = testModel(droppedScript)
+  const droppedStream = droppedModel.stream
+  let replyStreams = 0
+  droppedModel.stream = async function* (request) {
+    const blob = request.messages.map((message) => message.content).join("\n")
+    if (blob.includes("You are Remy the Rat") && blob.includes("still missing")) {
+      replyStreams += 1
+      droppedScript.speech = "The brisket at Fikscue or the soup dumplings at Dumpling Time."
+    } else if (blob.includes("You are Remy the Rat")) {
+      droppedScript.speech = "Fikscue or Dumpling Time before tipoff."
+    } else {
+      droppedScript.speech = "Remy, any other spots near Chase Center?"
+    }
+    yield* droppedStream.call(droppedModel, request)
+  }
+  const droppedActor = createActor({ store: dropped, model: droppedModel, emit: () => {}, search: async () => [] })
+  await droppedActor.handleUserMessage("What's the Warriors game like tonight, and where should we eat dinner?")
+  await waitFor(() => dropped.messages().filter((message) => message.author === "remy" && message.status === "done").length >= 1)
+  await new Promise((resolve) => setTimeout(resolve, 700))
+  assert.equal(replyStreams, 1)
+  assert.deepEqual(
+    dropped.messages().filter((message) => message.author !== "user").map((message) => message.author),
+    ["curry", "remy"],
+  )
+})
+
+test("one answer can ask both Remy and McQueen", async () => {
+  const store = createStore(":memory:")
+  const script = {
+    maxTokens: [],
+    speech: "The game is in Phoenix. Remy, where should we eat, and McQueen, what car should he take?",
+    decide: () => ({ speak: true, subject: "sports", effort: "brief" }),
+  }
+  const model = testModel(script)
+  const original = model.stream
+  model.stream = async function* (request) {
+    const blob = request.messages.map((message) => message.content).join("\n")
+    script.speech = blob.includes("still missing")
+      ? "That part is covered."
+      : "The game is in Phoenix. Remy, where should we eat, and McQueen, what car should he take?"
+    yield* original.call(model, request)
+  }
+  const actor = createActor({ store, model, emit: () => {}, search: async () => [] })
+  await actor.handleUserMessage("who are the good players on the warriors")
+  await waitFor(() => store.messages().filter((message) => message.author !== "user" && message.status === "done").length >= 3)
+  assert.deepEqual(
+    store.messages().filter((message) => message.author !== "user").map((message) => message.author).sort(),
+    ["curry", "mcqueen", "remy"],
+  )
+})
+
+test("a stalled search still lets the owner answer, and a failed answer is tried once", async () => {
+  const stalled = createStore(":memory:")
+  const stalledModel = testModel({
+    maxTokens: [],
+    speech: "Curry and Green.",
+    decide: () => ({ speak: true, subject: "sports", effort: "brief" }),
+  })
+  const stalledActor = createActor({
+    store: stalled,
+    model: stalledModel,
+    emit: () => {},
+    searchTimeout: 40,
+    search: ({ signal }) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => resolve([{ title: "late", snippet: "too late" }]), 5000)
+      signal.addEventListener("abort", () => {
+        clearTimeout(timer)
+        const error = new Error("aborted")
+        error.name = "AbortError"
+        reject(error)
+      })
+    }),
+  })
+  await stalledActor.handleUserMessage("who are the good players on the warriors tonight")
+  await waitFor(() => stalled.messages().some((message) => message.body === "Curry and Green."))
+
+  const retried = createStore(":memory:")
+  const retriedModel = testModel({
+    maxTokens: [],
+    speech: "Curry and Green.",
+    decide: () => ({ speak: true, subject: "sports", effort: "brief" }),
+  })
+  const original = retriedModel.stream
+  let calls = 0
+  retriedModel.stream = async function* (request) {
+    calls += 1
+    if (calls === 1) throw new Error("socket hang up")
+    yield* original.call(retriedModel, request)
+  }
+  const retriedActor = createActor({ store: retried, model: retriedModel, emit: () => {}, search: async () => [] })
+  await retriedActor.handleUserMessage("who are the good players on the warriors")
+  await waitFor(() => retried.messages().some((message) => message.body === "Curry and Green."))
+  assert.equal(calls, 2)
+  assert.equal(retried.messages().filter((message) => message.author === "curry").length, 1)
+
+  const blank = createStore(":memory:")
+  const blankModel = testModel({
+    maxTokens: [],
+    speech: "Curry and Green.",
+    decide: () => ({ speak: true, subject: "sports", effort: "brief" }),
+  })
+  blankModel.stream = async function* () {}
+  const blankActor = createActor({ store: blank, model: blankModel, emit: () => {}, search: async () => [] })
+  await blankActor.handleUserMessage("Is the game worth watching?")
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  assert.deepEqual(blank.messages().map((message) => message.author), ["user"])
 })

@@ -75,7 +75,10 @@ sockets.on("connection", (socket) => {
       return
     }
     if (data?.type === "message" && typeof data.text === "string") {
-      void actor.handleUserMessage(data.text)
+      void actor.handleUserMessage(data.text).catch((error) => console.error(error.message))
+    }
+    if (data?.type === "clear") {
+      void actor.reset().catch((error) => console.error(error.message))
     }
   })
   socket.on("close", () => clients.delete(socket))

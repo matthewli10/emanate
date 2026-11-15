@@ -14,11 +14,11 @@ You can cut in while they are still writing. That changes the answer on screen. 
 
 Each friend has private notes: who they are, how they judge their subject, and their general knowledge of that subject only. Curry's notes have no restaurants and no cars. Remy's have no sports and no cars. McQueen's have no sports and no restaurants. The notes are added only to that friend's model call. They never appear in the chat.
 
-Every call also names the other friends and their subjects. It does not include their notes. The actor reads the question and assigns the subjects before anyone writes. A sports question is Curry's, food is Remy's, and cars are McQueen's, even if a friend asks to speak on the wrong subject. A question that crosses lanes needs each owner. "Should I take the job?" is nobody's subject, so only one friend answers.
+Every call also names the other friends and their subjects. It does not include their notes. Before anyone writes, the model reads the conversation and names the lanes the line needs. The code does not match trigger words. It only accepts sports, food, and cars, and it gives each lane to the friend who owns it. A line that needs more than one lane gets each owner. A follow-up stays on the lane it continues, even when the wording has not been seen before. A line outside those lanes gets one friend. A friend is never added because he volunteered for someone else's lane.
 
 They answer general questions in their subject. Well-known players, dishes, and cars are fair game. A live score, a current roster, today's price, or what is open comes from a web search run for that friend before they write. The results go only into that friend's call. If the search comes back empty, they still answer what they know and do not invent the missing current fact.
 
-A friend speaks only as himself. He does not start a message with someone else's name. "Never mind" ends the turn. "Why can't you answer?" stays on the subject of the previous question.
+A friend speaks only as himself. He does not start a message with someone else's name. When the user drops the turn, nobody answers and the last lanes stay. A hello with nothing underway is answered by Curry. A hello after a real question stays on those lanes. The model makes that call from the conversation. The owner of the user's question always answers. That answer is not treated as a reply, so it is not dropped for repeating an earlier line.
 
 ## Architecture
 
@@ -50,9 +50,9 @@ One process owns a conversation. That single writer is what makes the order reli
 
 ## A turn
 
-Your message is saved into the shared conversation. The actor assigns subjects from the message. Only the owner of each subject is allowed to write. Each owner still decides how long the answer should be. A friend is never added because he volunteered for someone else's subject.
+Your message is saved into the shared conversation. The model names the lanes, and whether each one needs a current fact. Only the owner of each named lane writes. Each owner still decides how long the answer should be.
 
-When the question needs a current fact, the actor searches the web for that friend and puts the results in his call. On DeepSeek this uses the built-in web search. The chat does not show a search step.
+When a lane needs a current fact, the actor searches the web for that friend and puts the results in his call. On DeepSeek this uses the built-in web search. The chat does not show a search step.
 
 Whoever is left starts writing at the same time, into the same chat.
 
@@ -71,19 +71,19 @@ sequenceDiagram
   Friends-->>You: owners write at the same time
 ```
 
-When that wave finishes, a friend who was addressed by name may write one reply. Nobody else joins. A name counts as an address only when it is the first word, it is followed by a comma, or it comes right after "ask" or "tell". The names are Stephen, Curry, Remy, Lightning McQueen, and McQueen. The lowercase word "curry" is the dish, not Stephen Curry. The exchange ends when nobody has anything new, or after two rounds of replies. It does not start while a rewrite is still running.
+When that wave finishes, a friend who was addressed by name may write one reply. One message can address more than one friend, and each of them may reply. The model decides whether that friend still has a point that is not already in the chat, before the reply and again after it is written. A reply the model judges as a repeat is not saved. A reply it judges as new is saved. Nobody else joins. A name counts as an address only when it is the first word, it is followed by a comma, or it comes right after "ask" or "tell". The names are Stephen, Curry, Remy, Lightning McQueen, and McQueen. The lowercase word "curry" is the dish, not Stephen Curry. The exchange ends when nobody has anything new, or after two rounds of replies. It does not start while a rewrite is still running.
 
 Friends writing in the same wave cannot see each other's words as they appear, only the subject labels used to decide who stays. Two answers in one wave can still overlap in wording. The next round stays quiet about what was already said.
 
 ## Steering
 
-A new line while friends are writing is handled before any more of the affected answer is accepted.
-
-A name, using the same address rule as a reply, selects that friend. With no name, everyone currently writing is included. "Stop" halts all of them and cancels any further replies. Anything else rewrites the current answer in the same bubble. The other friends keep writing.
+A new line while friends are writing stops the old draft immediately, before anything else is decided. The same bubble then follows the new line. A name selects that friend, and the others keep writing. With no name, everyone writing is included. If the new line moves to a different lane, the friends who no longer own it stop where they are, and the new owner starts. "Stop" halts all of them and cancels any further replies.
 
 The old text stays on screen until the new answer produces its first word. If that call fails, or you say stop before then, the old text remains. The rewritten answer keeps its original place in the chat.
 
-Your line is a normal message. A line that tells a friend how to behave is saved and put at the top of later calls, including after a reload. A line that asks a question or changes the topic changes this answer only. The actor marks each line keep or once. If that mark fails, a question mark means once, and "from now on", "always", "never", and "don't" mean keep. Anything else is once. "Stop" is neither. A kept line with a name is saved for that friend. A kept line with no name is saved for the room.
+A correction after an answer has finished is a new turn for the same lane. It does not become a standing rule, and it does not cancel the turn. "Actually, Chinese" after a Thai answer is still food, so Remy answers again.
+
+A lasting rule about how to behave is saved and put at the top of later calls, including after a reload. A question or a correction is for this turn only. The model marks each line keep or once. If that mark fails, a question mark means once, and "from now on", "always", "never", and "don't" mean keep. Anything else is once. A line that asks a lane to answer is once even if the mark says keep. "Stop" is neither. A kept line with a name is saved for that friend. A kept line with no name is saved for the room.
 
 ```mermaid
 sequenceDiagram

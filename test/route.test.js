@@ -1,45 +1,45 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { detectSubjects, isDismiss, isFollowUp, routeMessage } from "../src/route.js"
-import { cleanSpeech, isPendingName } from "../src/voice.js"
+import { readFileSync } from "node:fs"
+import { parseRoute } from "../src/route.js"
+import { markMessages, routeMessages } from "../src/prompts.js"
+import { cleanSpeech, isPendingName, isPendingQuiet, isQuietReply } from "../src/voice.js"
 import { createWebSearch, snippetsFromResponse } from "../src/search.js"
 
-test("a warriors question is sports, not cars", () => {
-  assert.deepEqual(detectSubjects("who are the good players on the warriors"), ["sports"])
-})
-
-test("dinner is food, and ordering curry is not Stephen Curry", () => {
-  assert.deepEqual(detectSubjects("what curry should I order for dinner"), ["food"])
-})
-
-test("a drive to dinner before a game needs all three subjects", () => {
-  assert.deepEqual(
-    detectSubjects("Is it worth driving an hour to that restaurant on a night there's a big game?"),
-    ["sports", "food", "cars"],
-  )
-})
-
-test("never mind dismisses without changing the previous subject", () => {
-  const route = routeMessage({ text: "nvm i know", lastSubjects: ["sports"] })
-  assert.equal(route.dismiss, true)
-  assert.deepEqual(route.subjects, ["sports"])
-})
-
-test("why can't you stays on the previous subject and searches", () => {
-  const route = routeMessage({ text: "why cant you give me the answer", lastSubjects: ["sports"] })
+test("a route answer is accepted only for the three lanes", () => {
+  const route = parseRoute('{"subjects":["food","sports","nope"],"search":["food","cars"],"dismiss":false,"followUp":true,"greet":false}')
+  assert.deepEqual(route.subjects, ["sports", "food"])
+  assert.deepEqual(route.search, ["food"])
   assert.equal(route.followUp, true)
-  assert.equal(route.needsSearch, true)
-  assert.deepEqual(route.subjects, ["sports"])
+  assert.equal(route.dismiss, false)
+  assert.equal(parseRoute("not json"), null)
+  const dropped = parseRoute('{"subjects":["food"],"search":["food"],"dismiss":true,"followUp":true,"greet":true}')
+  assert.equal(dropped.dismiss, true)
+  assert.deepEqual(dropped.subjects, [])
+  assert.equal(dropped.greet, false)
 })
 
-test("hello with no history is not a subject", () => {
-  assert.equal(isFollowUp("hello?"), true)
-  assert.deepEqual(routeMessage({ text: "hello?", lastSubjects: [] }).subjects, [])
-})
-
-test("a job question is nobody's subject and is not dismissed", () => {
-  assert.equal(isDismiss("Should I take the job?"), false)
-  assert.deepEqual(routeMessage({ text: "Should I take the job?" }).subjects, [])
+test("the routing prompt names the friends and does not list trigger words", () => {
+  const source = readFileSync(new URL("../src/route.js", import.meta.url), "utf8")
+  assert.equal(source.includes("warriors"), false)
+  assert.equal(source.includes("dinner"), false)
+  assert.equal(source.includes("parking"), false)
+  const [message] = routeMessages({
+    roster: [
+      { name: "Stephen Curry", label: "sports" },
+      { name: "Remy the Rat", label: "food and restaurants" },
+      { name: "Lightning McQueen", label: "cars" },
+    ],
+    transcript: [{ name: "Remy the Rat", author: "remy", body: "Fikscue is the move." }],
+    lastSubjects: ["food"],
+    text: "zxqp the flarn",
+  })
+  assert.match(message.content, /Remy the Rat: food and restaurants/)
+  assert.match(message.content, /Subjects already in this conversation: food/)
+  assert.match(message.content, /Latest line:\nzxqp the flarn/)
+  assert.match(message.content, /not a list of trigger words/)
+  assert.match(message.content, /A correction is not a dismiss/)
+  assert.match(markMessages("actually no chinese")[0].content, /Saying no to the current request is once/)
 })
 
 test("a name prefix is removed and a real sentence is kept", () => {
@@ -52,25 +52,11 @@ test("a name prefix is removed and a real sentence is kept", () => {
   assert.equal(isPendingName("[Stephen"), true)
   assert.equal(isPendingName("[Stephen Curry said]"), true)
   assert.equal(isPendingName("[Stephen Curry said] Hey"), false)
-})
-
-test("never mind keeps the subject, and a longer sentence does not", () => {
-  assert.equal(isDismiss("Never mind."), true)
-  assert.equal(isDismiss("i know"), true)
-  assert.equal(isDismiss("i know that already"), false)
-  assert.deepEqual(routeMessage({ text: "Never mind.", lastSubjects: ["food"] }).subjects, ["food"])
-})
-
-test("a bare match is not sports, and a game is", () => {
-  assert.deepEqual(detectSubjects("does this match the plan"), [])
-  assert.deepEqual(detectSubjects("who won the game tonight"), ["sports"])
-})
-
-test("a greeting with no history is not a subject", () => {
-  const route = routeMessage({ text: "hello?", lastSubjects: [] })
-  assert.equal(route.greet, true)
-  assert.equal(route.needsSearch, false)
-  assert.equal(isFollowUp("hello?"), true)
+  assert.equal(isQuietReply("nothing"), true)
+  assert.equal(isQuietReply("I'll stay quiet."), true)
+  assert.equal(isQuietReply("The lamb curry is the one to order."), false)
+  assert.equal(isPendingQuiet("I'll stay"), true)
+  assert.equal(isPendingQuiet("I'll stay for dessert"), false)
 })
 
 test("search snippets are read from tool results or JSON", () => {

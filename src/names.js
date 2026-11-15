@@ -21,12 +21,13 @@ export function isStop(text) {
   return /^(stop|stop everyone)[.!]?$/i.test(text.trim())
 }
 
-export function findAddress(text) {
+export function findAddresses(text) {
   const source = text.trim()
-  let best = null
+  const hits = []
 
   function consider(index, id) {
-    if (best == null || index < best.index) best = { index, id }
+    if (hits.some((hit) => hit.id === id)) return
+    hits.push({ index, id })
   }
 
   for (const [form, id] of FORMS) {
@@ -48,5 +49,11 @@ export function findAddress(text) {
     }
   }
 
-  return best ? { id: best.id } : null
+  hits.sort((a, b) => a.index - b.index)
+  return hits.map((hit) => hit.id)
+}
+
+export function findAddress(text) {
+  const [id] = findAddresses(text)
+  return id ? { id } : null
 }
